@@ -72,8 +72,8 @@ df_claude_sonnet.to_csv('data/timing_data_claude_sonnet.csv', index=False)
 df_claude_haiku.to_csv('data/timing_data_claude_haiku.csv', index=False)
 df_claude_opus.to_csv('data/timing_data_claude_opus.csv', index=False)
 
-# print distribution
 sns.set_theme(style="whitegrid")
+# scatter plot
 for df in dataframes: 
     model_name = df['model'].iloc[0]
     # Plot each dataframe with observations of time_taken vs total_tokens 
@@ -83,8 +83,25 @@ for df in dataframes:
     plt.xlabel('Total Tokens (Prompt + Response)')
     plt.ylabel('Time Taken (seconds)')
     plt.title(model_name)
-    plt.savefig('data/' + model_name + '.png')
+    plt.savefig('data/scatter_' + model_name + '.png')
     # plt.show()
 
-
+# violin plot 
+for df in dataframes: 
+    min_x_value = 0
+    max_x_value = df['total_tokens'].max()
+    bins = range(min_x_value, max_x_value + 50, 50)  # Bins every 50 units
+    labels = [f'{i}-{i+49}' for i in range(min_x_value, max_x_value, 50)]  # Corresponding labels
+    df['binned_total_tokens'] = pd.cut(df['total_tokens'], bins=bins, labels=labels, include_lowest=True)
+    model_name = df['model'].iloc[0]
+    plt.clf()
+    plt.figure(figsize=(12, 6))
+    sns.violinplot(data=df, x='binned_total_tokens', y='time_taken (s)', inner='box')
+    plt.xticks(rotation=90)
+    plt.tight_layout()
+    plt.xlabel('Bucketed Total Tokens (Prompt + Response)')
+    plt.ylabel('Time Taken (seconds)')
+    plt.title(model_name)
+    plt.savefig('data/violin_' + model_name + '.png')
+    # plt.show()
 
