@@ -99,6 +99,7 @@ for df in dataframes:
     sns.violinplot(data=df, x='binned_total_tokens', y='time_taken (s)', inner='box')
     plt.xticks(rotation=90)
     plt.tight_layout()
+    plt.subplots_adjust(top=0.9)
     plt.xlabel('Bucketed Total Tokens (Prompt + Response)')
     plt.ylabel('Time Taken (seconds)')
     plt.title(model_name)
