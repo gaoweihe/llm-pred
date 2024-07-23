@@ -1,3 +1,10 @@
+# Environments 
+
+```
+cd /path/to/project
+bash setup/installer.sh
+```
+
 # LLM Latency Prediction 
 
 Put data files in `data/`.
