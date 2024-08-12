@@ -1,0 +1,18 @@
+{
+    "dataset": "prod-user-conversation-1000-each.json",
+    "dataset_format": "json", 
+    "model_list": {
+        "phi-2": "microsoft/phi-2",
+        "phi-3": "microsoft/Phi-3-mini-4k-instruct", 
+        "mistral": "mistralai/Mistral-7B-v0.3"
+    }, 
+    "model_name": "phi-2", 
+    "std_english_only": false,
+    "substitute_emoji": true, 
+    "eliminate_outliers": false, 
+    "overwrite_after_preprocess": false, 
+    "sample_count": 3, 
+    "sample_policy": "head", 
+    "max_new_tokens": 500, 
+    "test_count": 10
+}
