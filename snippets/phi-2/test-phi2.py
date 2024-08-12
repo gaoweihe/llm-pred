@@ -13,6 +13,7 @@ import unicodedata
 proj_dir = pathlib.Path().resolve()
 data_dir = os.path.join(proj_dir, "data") 
 config_path = os.path.join(proj_dir, "snippets", "phi-2", "config.json")
+np.random.seed()
 
 def read_config():
     with open(config_path) as f:
@@ -34,6 +35,10 @@ def is_standard_english(text):
     # This regex pattern matches standard English characters, numbers, and basic punctuation
     pattern = r'^[a-zA-Z0-9\s.,!?()-]+$'
     return bool(re.match(pattern, str(text))) 
+
+def is_arabic(text):
+    arabic_pattern = re.compile(r'[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]+')
+    return bool(arabic_pattern.search(text))
 
 def is_long_enough(text, length): 
     return len(str(text)) >= length
@@ -62,31 +67,6 @@ def prepare_datasets(glb_config):
         df_claude_haiku = timing_data[timing_data['model'].str.contains('claude-3-haiku')] 
 
         dataframes = [df_gpt3, df_gpt4, df_gpt4_new, df_claude_opus, df_claude_sonnet, df_claude_haiku]
-
-        if glb_config["substitute_emoji"]: 
-            # Substitute emoji characters with their names
-            for df_index, df in enumerate(dataframes):
-                dataframes[df_index]['prompt'] = dataframes[df_index]['prompt'].apply(
-                    lambda x: emoji.demojize(x))
-                dataframes[df_index]['response'] = dataframes[df_index]['response'].apply(
-                    lambda x: emoji.demojize(x))
-                
-        if glb_config["eliminate_outliers"]: 
-            for df_index, df in enumerate(dataframes):
-                # eliminate outliers
-                dataframes[df_index] = df[df['time_taken (s)'] < 1000] 
-                
-        if glb_config["std_english_only"]: 
-            for df_index, df in enumerate(dataframes):
-                # Delete non-standard characters 
-                dataframes[df_index] = df.applymap(lambda x: x if is_standard_english(x) else None)
-                dataframes[df_index] = df.dropna() 
-                
-        if glb_config["overwrite_after_preprocess"]: 
-            # Save dataframe to csv
-            df_gpt3.to_csv(glb_config["path_to_dataset"], index=False) 
-            
-        return dataframes[0]
     
     elif glb_config["dataset_format"] == "json":
         dataframe_all = pd.DataFrame(columns = ['user_id', 'prompt', 'response', 'model'])
@@ -125,36 +105,48 @@ def prepare_datasets(glb_config):
 
         dataframes = [df_gpt3, df_gpt4, df_gpt4_new, df_claude_opus, df_claude_sonnet, df_claude_haiku]
 
-        if glb_config["substitute_emoji"]: 
-            # Substitute emoji characters with their names
-            for df_index, df in enumerate(dataframes):
-                dataframes[df_index]['prompt'] = dataframes[df_index]['prompt'].apply(
-                    lambda x: emoji.demojize(x))
-                dataframes[df_index]['response'] = dataframes[df_index]['response'].apply(
-                    lambda x: emoji.demojize(x))
+    if glb_config["substitute_emoji"]: 
+        # Substitute emoji characters with their names
+        for df_index, df in enumerate(dataframes):
+            df['prompt'] = df['prompt'].apply(
+                lambda x: emoji.demojize(x))
+            df['response'] = df['response'].apply(
+                lambda x: emoji.demojize(x))
+            dataframes[df_index] = df
                 
-        if glb_config["eliminate_outliers"]: 
-            for df_index, df in enumerate(dataframes):
-                # eliminate outliers
-                dataframes[df_index] = df[df['time_taken (s)'] < 1000] 
+    if glb_config["eliminate_outliers"]: 
+        for df_index, df in enumerate(dataframes):
+            # eliminate outliers
+            df = df[df['time_taken (s)'] < 1000] 
+            dataframes[df_index] = df
                 
-        if glb_config["std_english_only"]: 
-            for df_index, df in enumerate(dataframes):
-                # Delete non-standard characters 
-                dataframes[df_index] = df.applymap(lambda x: x if is_standard_english(x) else None)
-                dataframes[df_index] = df.dropna() 
-                
-        if glb_config["overwrite_after_preprocess"]: 
-            # Save dataframe to csv
-            df_gpt3.to_csv(glb_config["path_to_dataset"], index=False) 
+    if glb_config["std_english_only"]: 
+        for df_index, df in enumerate(dataframes):
+            # Delete non-standard characters 
+            df['prompt'] = df['prompt'].apply(
+                lambda x: x if is_standard_english(x) else None)
+            df['response'] = df['response'].apply(
+                lambda x: x if is_standard_english(x) else None)
+            df = df.dropna(subset=['prompt', 'response'])
+            dataframes[df_index] = df
             
-        return dataframes[0]
+    if glb_config["no_arabic"]: 
+        for df_index, df in enumerate(dataframes): 
+            df['prompt'] = df['prompt'].apply(
+                lambda x: x if not is_arabic(x) else None)
+            df['response'] = df['response'].apply(
+                lambda x: x if not is_arabic(x) else None)
+            df = df.dropna(subset=['prompt', 'response'])
+            dataframes[df_index] = df
+            
+    if glb_config["overwrite_after_preprocess"]: 
+        # Save dataframe to csv
+        df_gpt3.to_csv(glb_config["path_to_dataset"], index=False) 
+            
+    return dataframes[0]
 
 # Randomly select samples
-def sample(dataframe, glb_config): 
-    # numpy random generator 
-    random_generator = np.random.default_rng()
-    
+def sample(dataframe, glb_config):       
     examples = []
     example_num = glb_config["sample_count"]
 
@@ -164,8 +156,7 @@ def sample(dataframe, glb_config):
         # df_gpt3 = df_gpt3.applymap(lambda x: x if is_long_enough(x, 5) else None)
         # df_gpt3 = df_gpt3.dropna()
         df_gpt3_sample = dataframe.sample(
-            n = example_num + 1, 
-            random_state = random_generator)
+            n = example_num + 1)
         # Get the last row of the DataFrame
         example_prompt = df_gpt3_sample.iloc[-1]
         # Get all the rows but the last one
@@ -192,56 +183,64 @@ def sample(dataframe, glb_config):
     return examples, example_prompt 
 
 def generate(model, tokenizer, examples, example_input, glb_config): 
-    result_df = pd.DataFrame(columns = ['prompt', 'response', 'ground_truth', 'resp_len', 'gt_len', 'diff'])
-
     sys_prompt = """Given a prompt, respond in the same length as GPT-3.5 does. You should return with one single response only. \n\n\n"""
     example_prompt = """Here are some examples. Each example consists of a prompt and a response. \n\n\n"""
 
-    for i in tqdm.tqdm(range(glb_config["test_count"])): 
-        for example in examples:
-            example_prompt += example
-        input = """Now, the prompt for you to predict is: """ + example_input['prompt'] + "\n\n\n"
-        prompt = sys_prompt + example_prompt + input
-        print("Prompt: \n" + prompt)
-        inputs = tokenizer(
-            prompt, 
-            return_tensors = "pt", 
-            return_attention_mask = False)
+    for example in examples:
+        example_prompt += example
+    input = """Now, the prompt for you to predict is: """ + example_input['prompt'] + "\n\n\n"
+    prompt = sys_prompt + example_prompt + input
+    inputs = tokenizer(
+        prompt, 
+        return_tensors = "pt", 
+        return_attention_mask = False)
 
-        max_new_tokens = glb_config["max_new_tokens"]
-        outputs = model.generate(
-            **inputs, 
-            max_new_tokens = max_new_tokens)
-        text = tokenizer.batch_decode(outputs)[0]
+    max_new_tokens = glb_config["max_new_tokens"]
+    outputs = model.generate(
+        **inputs, 
+        max_new_tokens = max_new_tokens)
+    text = tokenizer.batch_decode(outputs)[0]
+    text = text[len(prompt):]
         
-        print("Prediction: \n" + text) 
-        print ("\n\n\n --------------- \n\n\n")
-        print("Ground truth: \n" + example_input['response'])
-        
-        # append to the result dataframe
-        new_record = pd.DataFrame.from_records([{
-            'prompt':example_input['prompt'], 
-            'response': text, 
-            'ground_truth': example_input['response'], 
-            'resp_len': len(text), 
-            'gt_len': len(example_input['response']), 
-            'diff': len(text) - len(example_input['response'])
-        }])
-        result_df = pd.concat(
-            [result_df, new_record])
+    # append to the result dataframe
+    new_record = pd.DataFrame.from_records([{
+        'examples': example_prompt,
+        'prompt': example_input['prompt'], 
+        'response': text, 
+        'ground_truth': example_input['response'], 
+        'resp_len': len(text), 
+        'gt_len': len(example_input['response']), 
+        'diff': len(text) - len(example_input['response'])
+    }])
     
-    # save result   
-    result_df.to_csv(
-        "../../data/result.csv", 
-        index=False) 
+    return new_record 
     
 def main():
     glb_config = read_config() 
     dataframe = prepare_datasets(glb_config)
-    (examples, example_prompt) = sample(dataframe, glb_config)
+    
+    result_df = pd.DataFrame(columns = [
+        'examples', 
+        'prompt', 
+        'response', 
+        'ground_truth', 
+        'resp_len', 
+        'gt_len', 
+        'diff'])
+    
     with torch.no_grad(): 
         model, tokenizer = load_models(glb_config)
-        generate(model, tokenizer, examples, example_prompt, glb_config)
+    for i in tqdm.tqdm(range(glb_config["test_count"])): 
+        with torch.no_grad(): 
+            (examples, example_prompt) = sample(dataframe, glb_config)
+            new_record = generate(model, tokenizer, examples, example_prompt, glb_config) 
+            result_df = pd.concat(
+                [result_df, new_record])
+    
+    # save result   
+    result_df.to_csv(
+        os.path.join(data_dir, "result.csv"), 
+        index=False) 
 
 if __name__ == "__main__":
     main()

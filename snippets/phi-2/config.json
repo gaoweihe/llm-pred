@@ -7,12 +7,13 @@
         "mistral": "mistralai/Mistral-7B-v0.3"
     }, 
     "model_name": "phi-2", 
-    "std_english_only": false,
+    "std_english_only": false, 
+    "no_arabic": true, 
     "substitute_emoji": true, 
     "eliminate_outliers": false, 
     "overwrite_after_preprocess": false, 
     "sample_count": 3, 
-    "sample_policy": "head", 
-    "max_new_tokens": 500, 
-    "test_count": 10
+    "sample_policy": "random", 
+    "max_new_tokens": 1000, 
+    "test_count": 50
 }
