@@ -1,6 +1,4 @@
 import json 
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
 import pandas as pd
 import numpy as np
 import re
@@ -104,6 +102,7 @@ def prepare_datasets(glb_config):
         df_claude_haiku = dataframe_all[dataframe_all['model'].str.contains('claude-3-haiku')] 
 
         dataframes = [df_gpt3, df_gpt4, df_gpt4_new, df_claude_opus, df_claude_sonnet, df_claude_haiku]
+        return dataframe_all
 
     if glb_config["substitute_emoji"]: 
         # Substitute emoji characters with their names
@@ -144,6 +143,40 @@ def prepare_datasets(glb_config):
         df_gpt3.to_csv(glb_config["path_to_dataset"], index=False) 
             
     return dataframes[0]
+
+
+def apply_filters(glb_config, df):
+
+    # Substitute emoji characters with their names
+    if glb_config["substitute_emoji"]: 
+        
+        df['prompt'] = df['prompt'].apply(
+            lambda x: emoji.demojize(x))
+        df['response'] = df['response'].apply(
+            lambda x: emoji.demojize(x))
+
+    # eliminate outliers
+    if glb_config["eliminate_outliers"]: 
+        df = df[df['time_taken (s)'] < 1000]     
+
+    # Delete non-standard characters                 
+    if glb_config["std_english_only"]: 
+        df['prompt'] = df['prompt'].apply(
+            lambda x: x if is_standard_english(x) else None)
+        df['response'] = df['response'].apply(
+            lambda x: x if is_standard_english(x) else None)
+        df = df.dropna(subset=['prompt', 'response'])
+            
+    if glb_config["no_arabic"]: 
+        df['prompt'] = df['prompt'].apply(
+            lambda x: x if not is_arabic(x) else None)
+        df['response'] = df['response'].apply(
+            lambda x: x if not is_arabic(x) else None)
+        df = df.dropna(subset=['prompt', 'response'])
+            
+    return df
+    
+
 
 # Randomly select samples
 def sample(dataframe, glb_config):       
@@ -217,30 +250,38 @@ def generate(model, tokenizer, examples, example_input, glb_config):
     
 def main():
     glb_config = read_config() 
+
+
     dataframe = prepare_datasets(glb_config)
-    
-    result_df = pd.DataFrame(columns = [
-        'examples', 
-        'prompt', 
-        'response', 
-        'ground_truth', 
-        'resp_len', 
-        'gt_len', 
-        'diff'])
-    
-    with torch.no_grad(): 
-        model, tokenizer = load_models(glb_config)
-    for i in tqdm.tqdm(range(glb_config["test_count"])): 
-        with torch.no_grad(): 
-            (examples, example_prompt) = sample(dataframe, glb_config)
-            new_record = generate(model, tokenizer, examples, example_prompt, glb_config) 
-            result_df = pd.concat(
-                [result_df, new_record])
-    
-    # save result   
-    result_df.to_csv(
-        os.path.join(data_dir, "result.csv"), 
+
+    dataframe = apply_filters(glb_config, dataframe)
+
+    dataframe.to_csv(
+        os.path.join(data_dir, "cleaned_data.csv"), 
         index=False) 
+
+    # result_df = pd.DataFrame(columns = [
+    #     'examples', 
+    #     'prompt', 
+    #     'response', 
+    #     'ground_truth', 
+    #     'resp_len', 
+    #     'gt_len', 
+    #     'diff'])
+    
+    # with torch.no_grad(): 
+    #     model, tokenizer = load_models(glb_config)
+    # for i in tqdm.tqdm(range(glb_config["test_count"])): 
+    #     with torch.no_grad(): 
+    #         (examples, example_prompt) = sample(dataframe, glb_config)
+    #         new_record = generate(model, tokenizer, examples, example_prompt, glb_config) 
+    #         result_df = pd.concat(
+    #             [result_df, new_record])
+    
+    # # save result   
+    # result_df.to_csv(
+    #     os.path.join(data_dir, "result.csv"), 
+    #     index=False) 
 
 if __name__ == "__main__":
     main()
