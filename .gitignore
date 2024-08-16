@@ -1,10 +1,9 @@
 *.log
-*.csv
 *.png 
 .venv/
 .ipynb_checkpoints/
 *.code-workspace
-data/
+*.csv
+*.json
 !data/.gitkeep
 !data/timing_data.csv
-!data/prod-user-conversation-1000-each.json
