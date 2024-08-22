@@ -7,3 +7,5 @@
 *.json
 !data/.gitkeep
 !data/timing_data.csv
+*.deb
+Miniconda*.sh
