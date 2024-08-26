@@ -1,0 +1,26 @@
+{
+    "dataset": "prod-user-conversation-1000-each.json",
+    "dataset_format": "json", 
+    "model_map": {
+        "phi-2": "microsoft/phi-2",
+        "phi-3": "microsoft/Phi-3-mini-4k-instruct", 
+        "mistral": "mistralai/Mistral-7B-v0.3", 
+        "azure-gpt3": "gpt3-5", 
+        "azure-gpt4": "gpt4-new", 
+        "azure-haiku": "anthropic.claude-3-haiku-20240307-v1:0", 
+        "azure-sonnet": "anthropic.claude-3-sonnet-20240229-v1:0" 
+    }, 
+    "model_alias": "azure-gpt3", 
+    "std_english_only": false, 
+    "no_arabic": true, 
+    "substitute_emoji": true, 
+    "eliminate_outliers": false, 
+    "overwrite_after_preprocess": false, 
+    "sample_count": 10, 
+    "sample_policy": "random", 
+    "max_new_tokens": 1000, 
+    "test_count": 3, 
+    "llm_source": "remote", 
+    "llm_cooldown": 3, 
+    "temperature": 0.7 
+}

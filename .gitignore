@@ -5,6 +5,10 @@
 *.code-workspace
 *.csv
 *.json
+__pycache__/
+*.pyc
+*.pyo
+!prompting.json
 !data/.gitkeep
 !data/timing_data.csv
 *.deb

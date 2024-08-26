@@ -9,25 +9,31 @@ import tqdm
 import pathlib
 import os
 import unicodedata
+import time
+import asyncio
+
+# project specific 
+import importlib
+llm_call = importlib.import_module("llm-call")
 
 proj_dir = pathlib.Path().resolve()
 data_dir = os.path.join(proj_dir, "data") 
-config_path = os.path.join(proj_dir, "snippets", "phi-2", "config.json")
+config_path = os.path.join(proj_dir, "snippets", "prompting.json")
 np.random.seed()
 
 def read_config():
     with open(config_path) as f:
         return json.load(f)
 
-def load_models(glb_config): 
+def load_models(model_name, glb_config): 
     torch.set_default_device("cuda")
     model = AutoModelForCausalLM.from_pretrained(
-        glb_config["model_list"][glb_config["model_name"]], 
+        model_name, 
         torch_dtype = "auto", 
         trust_remote_code = True)
     model = model.eval()
     tokenizer = AutoTokenizer.from_pretrained(
-        glb_config["model_list"][glb_config["model_name"]], 
+        model_name, 
         trust_remote_code = True)
     return (model, tokenizer) 
 
@@ -182,40 +188,64 @@ def sample(dataframe, glb_config):
             
     return examples, example_prompt 
 
-def generate(model, tokenizer, examples, example_input, glb_config): 
-    sys_prompt = """Given a prompt, respond in the same length as GPT-3.5 does. You should return with one single response only. \n\n\n"""
+async def generate(model, tokenizer, examples, example_input, glb_config): 
+    sys_prompt = """Given a prompt, you must respond in the same length as GPT-3.5 does. You must return with one single response only. \n\n\n"""
     example_prompt = """Here are some examples. Each example consists of a prompt and a response. \n\n\n"""
 
     for example in examples:
         example_prompt += example
     input = """Now, the prompt for you to predict is: """ + example_input['prompt'] + "\n\n\n"
-    prompt = sys_prompt + example_prompt + input
+    
+    response_text = None 
+    if glb_config["llm_source"] == "local":
+        response_text = generate_local(model, tokenizer, sys_prompt + example_prompt + input, glb_config)
+    elif glb_config["llm_source"] == "remote":
+        response_text = await generate_remote(
+            model, 
+            prompt = example_prompt + input, 
+            system_prompt=sys_prompt, 
+            glb_config = glb_config)
+    
+    # append to the result dataframe
+    new_record = pd.DataFrame.from_records([{
+        'examples': example_prompt,
+        'prompt': example_input['prompt'], 
+        'response': response_text, 
+        'ground_truth': example_input['response'], 
+        'resp_len': len(response_text), 
+        'gt_len': len(example_input['response']), 
+        'diff': len(response_text) - len(example_input['response'])
+    }]) 
+    
+    return new_record
+
+def generate_local(model, tokenizer, prompt, glb_config): 
     inputs = tokenizer(
         prompt, 
         return_tensors = "pt", 
         return_attention_mask = False)
 
     max_new_tokens = glb_config["max_new_tokens"]
-    outputs = model.generate(
+    response_encoded = model.generate(
         **inputs, 
         max_new_tokens = max_new_tokens)
-    text = tokenizer.batch_decode(outputs)[0]
-    text = text[len(prompt):]
-        
-    # append to the result dataframe
-    new_record = pd.DataFrame.from_records([{
-        'examples': example_prompt,
-        'prompt': example_input['prompt'], 
-        'response': text, 
-        'ground_truth': example_input['response'], 
-        'resp_len': len(text), 
-        'gt_len': len(example_input['response']), 
-        'diff': len(text) - len(example_input['response'])
-    }])
+    response_decoded = tokenizer.batch_decode(response_encoded)[0]
+    response_text = response_decoded[len(prompt):]
     
-    return new_record 
+    return response_text 
+
+async def generate_remote(model, prompt, system_prompt, glb_config): 
+    temperature = glb_config["temperature"]
+    response_dict = await llm_call.websocket_post_model_adapter(
+        model, 
+        prompt, 
+        system_prompt, 
+        temperature) 
+    response_text = response_dict['result']
     
-def main():
+    return response_text
+    
+async def main():
     glb_config = read_config() 
     dataframe = prepare_datasets(glb_config)
     
@@ -228,14 +258,24 @@ def main():
         'gt_len', 
         'diff'])
     
-    with torch.no_grad(): 
-        model, tokenizer = load_models(glb_config)
-    for i in tqdm.tqdm(range(glb_config["test_count"])): 
+    model_name = glb_config["model_map"][glb_config["model_alias"]]
+    model = None
+    tokenizer = None
+    if glb_config["llm_source"] == "local":
         with torch.no_grad(): 
-            (examples, example_prompt) = sample(dataframe, glb_config)
-            new_record = generate(model, tokenizer, examples, example_prompt, glb_config) 
-            result_df = pd.concat(
-                [result_df, new_record])
+            model, tokenizer = load_models(model_name, glb_config) 
+            
+    for i in tqdm.tqdm(range(glb_config["test_count"])): 
+        if i != 0: 
+            time.sleep(glb_config["llm_cooldown"])
+            
+        (examples, example_prompt) = sample(dataframe, glb_config)
+        
+        with torch.no_grad(): 
+            new_record = await generate(model_name, tokenizer, examples, example_prompt, glb_config)
+        
+        result_df = pd.concat(
+            [result_df, new_record]) 
     
     # save result   
     result_df.to_csv(
@@ -243,4 +283,4 @@ def main():
         index=False) 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
