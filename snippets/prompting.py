@@ -189,7 +189,10 @@ def sample(dataframe, glb_config):
     return examples, example_prompt 
 
 async def generate(model, tokenizer, examples, example_input, glb_config): 
-    sys_prompt = """Given a prompt, you must respond in the same length as GPT-3.5 does. You must return with one single response only. \n\n\n"""
+    if glb_config['target'] == 'response':
+        sys_prompt = """Given a prompt, you must respond in the same length as GPT-3.5 does. You must return with one single response only. \n\n\n"""
+    elif glb_config['target'] == 'length': 
+        sys_prompt = """Given a prompt, you must respond with the output length prediction of GPT-3.5. You must return with one number only. \n\n\n"""
     example_prompt = """Here are some examples. Each example consists of a prompt and a response. \n\n\n"""
 
     for example in examples:
@@ -207,6 +210,12 @@ async def generate(model, tokenizer, examples, example_input, glb_config):
             glb_config = glb_config)
     
     # append to the result dataframe
+    diff = 0
+    if glb_config['target'] == 'response':
+        diff = len(response_text) - len(example_input['response'])
+    elif glb_config['target'] == 'length': 
+        # FIXME: extract numerical result for analysis 
+        diff = 0
     new_record = pd.DataFrame.from_records([{
         'examples': example_prompt,
         'prompt': example_input['prompt'], 
@@ -214,7 +223,7 @@ async def generate(model, tokenizer, examples, example_input, glb_config):
         'ground_truth': example_input['response'], 
         'resp_len': len(response_text), 
         'gt_len': len(example_input['response']), 
-        'diff': len(response_text) - len(example_input['response'])
+        'diff': diff
     }]) 
     
     return new_record

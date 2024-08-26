@@ -19,8 +19,9 @@
     "sample_count": 10, 
     "sample_policy": "random", 
     "max_new_tokens": 1000, 
-    "test_count": 3, 
+    "test_count": 10, 
     "llm_source": "remote", 
     "llm_cooldown": 3, 
-    "temperature": 0.7 
+    "temperature": 0.7, 
+    "target": "length"
 }
