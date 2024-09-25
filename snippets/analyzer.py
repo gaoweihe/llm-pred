@@ -1,0 +1,213 @@
+import pandas as pd 
+import pathlib
+import os
+import asyncio
+import emoji
+from transformers import AutoModelForCausalLM, AutoTokenizer
+import torch
+import seaborn as sns
+import matplotlib.pyplot as plt
+from itertools import combinations
+import tqdm
+
+# project specific 
+import filters
+
+proj_dir = pathlib.Path().resolve()
+data_dir = os.path.join(proj_dir, "data") 
+
+def load_models(model_name, glb_config): 
+    torch.set_default_device("cpu")
+    # model = AutoModelForCausalLM.from_pretrained(
+    #     model_name, 
+    #     torch_dtype = "auto", 
+    #     trust_remote_code = True)
+    # model = model.eval()
+    model = None
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_name, 
+        trust_remote_code = True)
+    return (model, tokenizer) 
+
+async def main():
+    model_gpt3, tokenizer_gpt3 = load_models("Xenova/gpt-3.5-turbo", None)
+    model_gpt4, tokenizer_gpt4 = load_models("Xenova/gpt-4o", None) 
+    models = [model_gpt3, model_gpt4]
+    tokenizers = [tokenizer_gpt3, tokenizer_gpt4]
+    
+    df_raw = pd.read_pickle(os.path.join(data_dir, "latest_dataset.pkl"))
+    # df_raw.loc[:, 'message'] = df_raw['message'].apply(
+    #     lambda x: emoji.demojize(x))
+    # df_raw.loc[:, 'response'] = df_raw['response'].apply(
+    #     lambda x: emoji.demojize(x))
+    
+    df_gpt3 = df_raw[df_raw['model'].str.contains('gpt3-5')]
+    df_gpt4 = df_raw[df_raw['model'].str.contains('gpt-4o')]
+    
+    dataframes = [df_gpt3, df_gpt4]
+    
+    # for df_index, df in enumerate(dataframes): 
+    #     # Delete non-standard characters 
+    #     df.loc[:, 'message'] = df['message'].apply(
+    #         lambda x: x if filters.is_standard_english(x) else None)
+    #     df.loc[:, 'response'] = df['response'].apply(
+    #         lambda x: x if filters.is_standard_english(x) else None)
+    #     df = df.dropna(subset=['message', 'response'])
+    #     dataframes[df_index] = df
+    
+    for df_index, df in enumerate(dataframes): 
+        df = df.copy()
+        df.loc[:, 'message_tokens'] = None
+        df.loc[:, 'response_tokens'] = None
+        df.loc[:, 'latency'] = None
+        dataframes[df_index] = df
+        # for each row, tokenize the message and response columns
+        for row_index, row in df.iterrows():
+            message = row['message']
+            response = row['response']
+            start_time = float(row['start_timestamp'])
+            end_time = float(row['end_timestamp'])
+            latency = end_time - start_time
+            message_tokens = tokenizers[df_index].tokenize(message)
+            response_tokens = tokenizers[df_index].tokenize(response)
+            df.at[row_index, 'message_tokens'] = len(message_tokens)
+            df.at[row_index, 'response_tokens'] = len(response_tokens)
+            df.at[row_index, 'latency'] = latency
+            
+    for df_index, df in enumerate(dataframes):
+        # eliminate outliers
+        dataframes[df_index] = df[df['latency'] < 20]
+            
+    dataframes[0].to_csv(os.path.join(data_dir, "latest_dataset_gpt3.csv"), index=False, encoding='utf-8')  # index=False to exclude row numbers 
+    dataframes[1].to_csv(os.path.join(data_dir, "latest_dataset_gpt4.csv"), index=False, encoding='utf-8')  # index=False to exclude row numbers 
+    
+    sns.set_theme(style="whitegrid")
+    # for each data frame
+    for df_index, df in enumerate(dataframes): 
+        model_name = df['model'].iloc[0]
+        
+        # input scatter
+        plt.clf()
+        plt.figure(figsize=(10, 6))
+        sns.scatterplot(data=df, x='message_tokens', y='latency', hue='model')
+        plt.xlabel('Prompt Tokens')
+        plt.ylabel('Latency')
+        plt.title(model_name + '_input')
+        plt.savefig('data/scatter_' + model_name + '_input' + '.png') 
+        
+        # output scatter 
+        plt.clf()
+        plt.figure(figsize=(10, 6))
+        sns.scatterplot(data=df, x='response_tokens', y='latency', hue='model')
+        plt.xlabel('Response Tokens')
+        plt.ylabel('Latency')
+        plt.title(model_name + '_output')
+        plt.savefig('data/scatter_' + model_name + '_output' + '.png')
+        
+        # input cdf 
+        plt.clf() 
+        sns.ecdfplot(data=df['message_tokens'])
+        plt.xlabel('message_tokens')
+        plt.ylabel('Cumulative Probability')
+        plt.title(model_name +'_CDF' +  '_input')
+        plt.savefig('data/cdf_' + model_name + '_input' + '.png')
+        
+        # output cdf 
+        plt.clf() 
+        sns.ecdfplot(data=df['response_tokens'])
+        plt.xlabel('response_tokens')
+        plt.ylabel('Cumulative Probability')
+        plt.title(model_name +'_CDF' +  '_output')
+        plt.savefig('data/cdf_' + model_name + '_output' + '.png')
+        
+        # latency cdf 
+        plt.clf() 
+        sns.ecdfplot(data=df['latency'])
+        plt.xlabel('latency')
+        plt.ylabel('Cumulative Probability')
+        plt.title(model_name +'_CDF' +  '_latency')
+        plt.savefig('data/cdf_' + model_name + '_latency' + '.png')
+        
+    # Define tolerances and threshold
+    message_tolerance = 5    # Tolerance for message
+    response_tolerance = 5    # Tolerance for response
+    latency_threshold = 2  # Threshold for significant difference in latency 
+    
+    PAIR_WISE_REGEN = False 
+    if PAIR_WISE_REGEN: 
+        for df_index, df in enumerate(dataframes): 
+            model_name = df['model'].iloc[0]
+            
+            indices = df.index.tolist()
+            result_pairs = []
+            for idx1, idx2 in tqdm.tqdm(combinations(indices, 2), total=len(indices)*(len(indices)-1)//2):
+                # Extract the rows as series
+                row1 = df.loc[idx1]
+                row2 = df.loc[idx2]
+        
+                # Check if A and B values are within tolerances
+                if (abs(row1['message_tokens'] - row2['message_tokens']) <= message_tolerance) and (abs(row1['response_tokens'] - row2['response_tokens']) <= response_tolerance):
+                    # Check if latency difference is greater than threshold
+                    latency_diff = abs(row1['latency'] - row2['latency'])
+                    if latency_diff >= latency_threshold:
+                    # Store the pair with original data
+                        result_pairs.append({
+                            'Row1_Index': idx1,
+                            'Row2_Index': idx2,
+                            'message_tokens1': row1['message_tokens'],
+                            'message_tokens2': row2['message_tokens'],
+                            'response_tokens1': row1['response_tokens'],
+                            'response_tokens2': row2['response_tokens'],
+                            'latency1': row1['latency'],
+                            'latency2': row2['latency'],
+                            'latency_Difference': latency_diff
+                        }) 
+            
+            pairs_df = pd.DataFrame(result_pairs) 
+            pairs_df.to_csv('data/pairs_' + model_name + '.csv', index=False)
+    
+    for df_index, df in enumerate(dataframes): 
+        model_name = df['model'].iloc[0]
+        indices = df.index.tolist()
+        
+        pairs_df = pd.read_csv(os.path.join(data_dir, 'pairs_' + model_name + '.csv'))
+        row_index1 = pairs_df['Row1_Index'].tolist()
+        row_index2 = pairs_df['Row2_Index'].tolist() 
+        
+        result_dataframe = pd.DataFrame(columns = [
+            'model',
+            'latency1',
+            'latency2',
+            'latency_Difference',
+            'message_tokens1',
+            'message_tokens2',
+            'response_tokens1',
+            'response_tokens2',
+            'message1',
+            'message2',
+            'response1',
+            'response2'
+        ])
+        for curr_idx1, curr_idx2 in zip(row_index1, row_index2):
+            row1 = df.loc[curr_idx1]
+            row2 = df.loc[curr_idx2]
+            # add one row to new dataframe
+            result_dataframe = result_dataframe._append({
+                'model': row1['model'],
+                'latency1': row1['latency'],
+                'latency2': row2['latency'],
+                'latency_Difference': row1['latency'] - row2['latency'],
+                'message_tokens1': row1['message_tokens'],
+                'message_tokens2': row2['message_tokens'],
+                'response_tokens1': row1['response_tokens'],
+                'response_tokens2': row2['response_tokens'],
+                'message1': row1['message'],
+                'message2': row2['message'],
+                'response1': row1['response'],
+                'response2': row2['response']
+            }, ignore_index=True)
+        result_dataframe.to_csv(os.path.join(data_dir, 'pairs_result_' + model_name + '.csv'), index=False)
+
+if __name__ == "__main__":
+    asyncio.run(main())
+    
