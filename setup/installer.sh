@@ -24,3 +24,7 @@ sudo apt-get install libcudnn8=8.6.0.163-1+cuda11.8
 wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
 bash Miniconda3-latest-Linux-x86_64.sh -b -p $HOME/miniconda
 eval "$(/$HOME/miniconda/bin/conda shell.bash hook)"
+
+# clean temp files 
+rm -rf *.deb 
+rm -rf Miniconda*.sh 
