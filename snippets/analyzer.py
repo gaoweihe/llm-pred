@@ -9,6 +9,8 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 from itertools import combinations
 import tqdm
+import threading
+mutex = threading.Lock()
 
 # project specific 
 import filters
@@ -35,16 +37,18 @@ async def main():
     models = [model_gpt3, model_gpt4]
     tokenizers = [tokenizer_gpt3, tokenizer_gpt4]
     
-    df_raw = pd.read_pickle(os.path.join(data_dir, "latest_dataset.pkl"))
+    df_raw = pd.read_pickle(os.path.join(data_dir, "latest_dataset_unquantized.pkl"))
     # df_raw.loc[:, 'message'] = df_raw['message'].apply(
     #     lambda x: emoji.demojize(x))
     # df_raw.loc[:, 'response'] = df_raw['response'].apply(
     #     lambda x: emoji.demojize(x))
     
     df_gpt3 = df_raw[df_raw['model'].str.contains('gpt3-5')]
-    df_gpt4 = df_raw[df_raw['model'].str.contains('gpt-4o')]
+    df_gpt3.to_csv(os.path.join(data_dir, "gpt3-5.csv"))
+    # df_gpt4 = df_raw[df_raw['model'].str.contains('gpt-4o')]
+    # df_gpt4.to_csv(os.path.join(data_dir, "gpt-4o.csv"))
     
-    dataframes = [df_gpt3, df_gpt4]
+    dataframes = [df_gpt3]
     
     # for df_index, df in enumerate(dataframes): 
     #     # Delete non-standard characters 
@@ -79,7 +83,7 @@ async def main():
         dataframes[df_index] = df[df['latency'] < 20]
             
     dataframes[0].to_csv(os.path.join(data_dir, "latest_dataset_gpt3.csv"), index=False, encoding='utf-8')  # index=False to exclude row numbers 
-    dataframes[1].to_csv(os.path.join(data_dir, "latest_dataset_gpt4.csv"), index=False, encoding='utf-8')  # index=False to exclude row numbers 
+    # dataframes[1].to_csv(os.path.join(data_dir, "latest_dataset_gpt4.csv"), index=False, encoding='utf-8')  # index=False to exclude row numbers 
     
     sns.set_theme(style="whitegrid")
     # for each data frame
@@ -127,62 +131,95 @@ async def main():
         plt.ylabel('Cumulative Probability')
         plt.title(model_name +'_CDF' +  '_latency')
         plt.savefig('data/cdf_' + model_name + '_latency' + '.png')
+       
+    # Filter by TPS 
+    tps_upper = float('inf')
+    tps_lower = 50 
+    for df_index, df in enumerate(dataframes): 
+        model_name = df['model'].iloc[0]
+        df['tps'] = df['response_tokens'] / df['latency']
         
-    # Define tolerances and threshold
-    message_tolerance = 5    # Tolerance for message
-    response_tolerance = 5    # Tolerance for response
-    latency_threshold = 2  # Threshold for significant difference in latency 
+        # draw tps cdf plot 
+        plt.clf()
+        sns.ecdfplot(data=df['tps'])
+        plt.xlabel('tps')
+        plt.ylabel('Cumulative Probability')
+        plt.title(model_name +'_CDF' +  '_tps')
+        plt.savefig('data/cdf_' + model_name + '_tps' + '.png') 
+        
+        # filter out tps
+        df = df[(df['tps'] > tps_lower) & (df['tps'] < tps_upper)]
+        
+        dataframes[df_index] = df
     
-    PAIR_WISE_REGEN = False 
+    ## Pairwise analysis 
+    
+    # Define tolerances and threshold
+    column1_tolerance = 5
+    column2_tolerance = 5
+    column3_threshold = 2
+    
+    column_name3 = 'latency'
+    column_name1 = 'message_tokens'
+    column_name2 = 'response_tokens'
+    
+    exp_name = column_name3 + '_diff_' + model_name
+    exp_folder = os.path.join(data_dir, exp_name)
+    
+    PAIR_WISE_REGEN = True 
     if PAIR_WISE_REGEN: 
         for df_index, df in enumerate(dataframes): 
             model_name = df['model'].iloc[0]
             
             indices = df.index.tolist()
             result_pairs = []
+                    
             for idx1, idx2 in tqdm.tqdm(combinations(indices, 2), total=len(indices)*(len(indices)-1)//2):
                 # Extract the rows as series
                 row1 = df.loc[idx1]
                 row2 = df.loc[idx2]
         
-                # Check if A and B values are within tolerances
-                if (abs(row1['message_tokens'] - row2['message_tokens']) <= message_tolerance) and (abs(row1['response_tokens'] - row2['response_tokens']) <= response_tolerance):
-                    # Check if latency difference is greater than threshold
-                    latency_diff = abs(row1['latency'] - row2['latency'])
-                    if latency_diff >= latency_threshold:
+                # Check if column1 and column2 values are within tolerances
+                if (abs(row1[column_name1] - row2[column_name1]) <= column1_tolerance) and (abs(row1[column_name2] - row2[column_name2]) <= column2_tolerance):
+                    # Check if column3 difference is greater than threshold
+                    diff = abs(row1[column_name3] - row2[column_name3])
+                    if diff >= column3_threshold:
                     # Store the pair with original data
                         result_pairs.append({
                             'Row1_Index': idx1,
                             'Row2_Index': idx2,
-                            'message_tokens1': row1['message_tokens'],
-                            'message_tokens2': row2['message_tokens'],
-                            'response_tokens1': row1['response_tokens'],
-                            'response_tokens2': row2['response_tokens'],
-                            'latency1': row1['latency'],
-                            'latency2': row2['latency'],
-                            'latency_Difference': latency_diff
+                            column_name1 + '1': row1[column_name1],
+                            column_name1 + '2': row2[column_name1],
+                            column_name2 + '1': row1[column_name2],
+                            column_name2 + '2': row2[column_name2],
+                            column_name3 + '1': row1[column_name3],
+                            column_name3 + '2': row2[column_name3],
+                            column_name3 + '_Difference': diff
                         }) 
             
             pairs_df = pd.DataFrame(result_pairs) 
-            pairs_df.to_csv('data/pairs_' + model_name + '.csv', index=False)
+
+            path = os.path.join(exp_folder, 'pairs_' + model_name + '.csv')
+            pairs_df.to_csv(path, index=False)
     
+    # Pull difference data
     for df_index, df in enumerate(dataframes): 
         model_name = df['model'].iloc[0]
         indices = df.index.tolist()
         
-        pairs_df = pd.read_csv(os.path.join(data_dir, 'pairs_' + model_name + '.csv'))
+        pairs_df = pd.read_csv(os.path.join(exp_folder, 'pairs_' + model_name + '.csv'))
         row_index1 = pairs_df['Row1_Index'].tolist()
         row_index2 = pairs_df['Row2_Index'].tolist() 
         
         result_dataframe = pd.DataFrame(columns = [
             'model',
-            'latency1',
-            'latency2',
-            'latency_Difference',
-            'message_tokens1',
-            'message_tokens2',
-            'response_tokens1',
-            'response_tokens2',
+            column_name3 + '1',
+            column_name3 + '2',
+            column_name3 + '_Difference',
+            column_name1 + '1',
+            column_name1 + '2',
+            column_name2 + '1',
+            column_name2 + '2',
             'message1',
             'message2',
             'response1',
@@ -194,19 +231,30 @@ async def main():
             # add one row to new dataframe
             result_dataframe = result_dataframe._append({
                 'model': row1['model'],
-                'latency1': row1['latency'],
-                'latency2': row2['latency'],
-                'latency_Difference': row1['latency'] - row2['latency'],
-                'message_tokens1': row1['message_tokens'],
-                'message_tokens2': row2['message_tokens'],
-                'response_tokens1': row1['response_tokens'],
-                'response_tokens2': row2['response_tokens'],
+                column_name3 + '1': row1[column_name3],
+                column_name3 + '2': row2[column_name3],
+                column_name3 + '_Difference': row1[column_name3] - row2[column_name3],
+                column_name1 + '1': row1[column_name1],
+                column_name1 + '2': row2[column_name1],
+                column_name2 + '1': row1[column_name2],
+                column_name2 + '2': row2[column_name2],
                 'message1': row1['message'],
                 'message2': row2['message'],
                 'response1': row1['response'],
                 'response2': row2['response']
             }, ignore_index=True)
-        result_dataframe.to_csv(os.path.join(data_dir, 'pairs_result_' + model_name + '.csv'), index=False)
+        result_dataframe.to_csv(os.path.join(exp_folder, 'pairs_result_' + model_name + '.csv'), index=False) 
+        
+        # Plot CDF
+        plt.clf()
+        plt.figure(figsize=(10, 6))
+        diff_abs = abs(result_dataframe[column_name3 +'_Difference'].copy())
+        sns.ecdfplot(data=diff_abs)
+        plt.xlabel(column_name3 + '_Difference_abs')
+        plt.ylabel('Cumulative Probability')
+        plt.title(model_name +'_CDF_' +  column_name3 + '_Difference')
+        pic_name = 'cdf_' + model_name + '_' + column_name3 + '_Difference' + '.png'
+        plt.savefig(os.path.join(exp_folder, pic_name))
 
 if __name__ == "__main__":
     asyncio.run(main())
