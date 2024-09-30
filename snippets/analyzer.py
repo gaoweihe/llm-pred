@@ -151,28 +151,42 @@ async def main():
         df = df[(df['tps'] > tps_lower) & (df['tps'] < tps_upper)]
         
         dataframes[df_index] = df
+
+    ## tps affecting factors 
+
+    # for each data frame
+    for df_index, df in enumerate(dataframes): 
+        model_name = df['model'].iloc[0]
+        
+        # tps vs output tokens 
+        plt.clf()
+        sns.scatterplot(data=df, x='response_tokens', y='tps', hue='model')
+        plt.xlabel('Response Tokens')
+        plt.ylabel('TPS')
+        plt.title(model_name + '_output')
+        plt.savefig('data/scatter_' + model_name + '_tps_output_qremaining' + '.png')
     
     ## Pairwise analysis 
     
     # Define tolerances and threshold
     column1_tolerance = 5
     column2_tolerance = 5
-    column3_threshold = 2
+    column3_threshold = 0
     
     column_name3 = 'latency'
     column_name1 = 'message_tokens'
     column_name2 = 'response_tokens'
     
-    exp_name = column_name3 + '_diff_' + model_name
-    exp_folder = os.path.join(data_dir, exp_name)
-    
     PAIR_WISE_REGEN = True 
     if PAIR_WISE_REGEN: 
         for df_index, df in enumerate(dataframes): 
             model_name = df['model'].iloc[0]
+            exp_name = column_name3 + '_diff_' + model_name
+            exp_folder = os.path.join(data_dir, exp_name)
             
             indices = df.index.tolist()
-            result_pairs = []
+            incl_pairs = []
+            excl_pairs = []
                     
             for idx1, idx2 in tqdm.tqdm(combinations(indices, 2), total=len(indices)*(len(indices)-1)//2):
                 # Extract the rows as series
@@ -185,7 +199,7 @@ async def main():
                     diff = abs(row1[column_name3] - row2[column_name3])
                     if diff >= column3_threshold:
                     # Store the pair with original data
-                        result_pairs.append({
+                        incl_pairs.append({
                             'Row1_Index': idx1,
                             'Row2_Index': idx2,
                             column_name1 + '1': row1[column_name1],
@@ -196,22 +210,40 @@ async def main():
                             column_name3 + '2': row2[column_name3],
                             column_name3 + '_Difference': diff
                         }) 
-            
-            pairs_df = pd.DataFrame(result_pairs) 
+                    else: 
+                        excl_pairs.append({
+                            'Row1_Index': idx1,
+                            'Row2_Index': idx2, 
+                            column_name1 + '1': row1[column_name1],
+                            column_name1 + '2': row2[column_name1],
+                            column_name2 + '1': row1[column_name2],
+                            column_name2 + '2': row2[column_name2],
+                            column_name3 + '1': row1[column_name3],
+                            column_name3 + '2': row2[column_name3],
+                            column_name3 + '_Difference': diff
+                        })
+            incl_pairs_df = pd.DataFrame(incl_pairs) 
+            excl_pairs_df = pd.DataFrame(excl_pairs)
 
-            path = os.path.join(exp_folder, 'pairs_' + model_name + '.csv')
-            pairs_df.to_csv(path, index=False)
+            path = os.path.join(exp_folder, 'incl_pairs_' + model_name + '.csv')
+            incl_pairs_df.to_csv(path, index=False)
+
+            path = os.path.join(exp_folder, 'excl_pairs_' + model_name + '.csv')
+            excl_pairs_df.to_csv(path, index=False)
     
     # Pull difference data
     for df_index, df in enumerate(dataframes): 
         model_name = df['model'].iloc[0]
+        exp_name = column_name3 + '_diff_' + model_name
+        exp_folder = os.path.join(data_dir, exp_name)
+        
         indices = df.index.tolist()
         
-        pairs_df = pd.read_csv(os.path.join(exp_folder, 'pairs_' + model_name + '.csv'))
-        row_index1 = pairs_df['Row1_Index'].tolist()
-        row_index2 = pairs_df['Row2_Index'].tolist() 
+        incl_pairs_df = pd.read_csv(os.path.join(exp_folder, 'incl_pairs_' + model_name + '.csv'))
+        row_index1 = incl_pairs_df['Row1_Index'].tolist()
+        row_index2 = incl_pairs_df['Row2_Index'].tolist() 
         
-        result_dataframe = pd.DataFrame(columns = [
+        incl_result_dataframe = pd.DataFrame(columns = [
             'model',
             column_name3 + '1',
             column_name3 + '2',
@@ -229,13 +261,13 @@ async def main():
             row1 = df.loc[curr_idx1]
             row2 = df.loc[curr_idx2]
             # add one row to new dataframe
-            result_dataframe = result_dataframe._append({
+            incl_result_dataframe = incl_result_dataframe._append({
                 'model': row1['model'],
                 column_name3 + '1': row1[column_name3],
                 column_name3 + '2': row2[column_name3],
                 column_name3 + '_Difference': row1[column_name3] - row2[column_name3],
                 column_name1 + '1': row1[column_name1],
-                column_name1 + '2': row2[column_name1],
+                column_name1 + '2': row2[column_name1], 
                 column_name2 + '1': row1[column_name2],
                 column_name2 + '2': row2[column_name2],
                 'message1': row1['message'],
@@ -243,17 +275,71 @@ async def main():
                 'response1': row1['response'],
                 'response2': row2['response']
             }, ignore_index=True)
-        result_dataframe.to_csv(os.path.join(exp_folder, 'pairs_result_' + model_name + '.csv'), index=False) 
+        incl_result_dataframe.to_csv(os.path.join(exp_folder, 'incl_pairs_result_' + model_name + '.csv'), index=False) 
         
         # Plot CDF
         plt.clf()
         plt.figure(figsize=(10, 6))
-        diff_abs = abs(result_dataframe[column_name3 +'_Difference'].copy())
+        diff_abs = abs(incl_result_dataframe[column_name3 +'_Difference'].copy())
         sns.ecdfplot(data=diff_abs)
         plt.xlabel(column_name3 + '_Difference_abs')
         plt.ylabel('Cumulative Probability')
         plt.title(model_name +'_CDF_' +  column_name3 + '_Difference')
-        pic_name = 'cdf_' + model_name + '_' + column_name3 + '_Difference' + '.png'
+        pic_name = 'cdf_' + model_name + '_incl_' + column_name3 + '_Difference' + '.png'
+        plt.savefig(os.path.join(exp_folder, pic_name)) 
+
+        # excluded pairs
+        excl_pairs_df = pd.read_csv(os.path.join(exp_folder, 'excl_pairs_' + model_name + '.csv'))
+        row_index1 = excl_pairs_df['Row1_Index'].tolist()
+        row_index2 = excl_pairs_df['Row2_Index'].tolist()
+
+        # add one row to new dataframe
+        excl_result_dataframe = pd.DataFrame(columns = [
+            'model',
+            column_name3 + '1',
+            column_name3 + '2',
+            column_name3 + '_Difference',
+            column_name1 + '1',
+            column_name1 + '2',
+            column_name1 + 'Difference',
+            column_name2 + '1',
+            column_name2 + '2',
+            column_name2 + 'Difference',
+            'message1',
+            'message2',
+            'response1',
+            'response2'
+        ])
+        for curr_idx1, curr_idx2 in zip(row_index1, row_index2):
+            row1 = df.loc[curr_idx1]
+            row2 = df.loc[curr_idx2]
+            # add one row to new dataframe
+            excl_result_dataframe = excl_result_dataframe._append({
+                'model': row1['model'],
+                column_name3 + '1': row1[column_name3],
+                column_name3 + '2': row2[column_name3],
+                column_name3 + '_Difference': row1[column_name3] - row2[column_name3],
+                column_name1 + '1': row1[column_name1],
+                column_name1 + '2': row2[column_name1], 
+                column_name1 + 'Difference': row1[column_name1] - row2[column_name1],
+                column_name2 + '1': row1[column_name2],
+                column_name2 + '2': row2[column_name2],
+                column_name2 + 'Difference': row1[column_name2] - row2[column_name2],
+                'message1': row1['message'],
+                'message2': row2['message'],
+                'response1': row1['response'],
+                'response2': row2['response']
+            }, ignore_index=True)
+        excl_result_dataframe.to_csv(os.path.join(exp_folder, 'excl_pairs_result_' + model_name + '.csv'), index=False) 
+
+        # Plot scatter point plot
+        plt.clf()
+        plt.figure(figsize=(10, 6))
+        sns.scatterplot(data=excl_result_dataframe, x=column_name2 + '_Difference', y=column_name3 + '_Difference', hue='model')
+        plt.xlabel(column_name3 + '_Difference')
+        plt.ylabel(column_name2 + '_Difference')
+        plt.title(model_name + '_scatter_' + column_name3 + '_Difference')
+        pic_name = 'scatter_' + model_name + '_excl_' + column_name3 + '_Difference' + '.png'
         plt.savefig(os.path.join(exp_folder, pic_name))
 
 if __name__ == "__main__":
