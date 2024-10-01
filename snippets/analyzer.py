@@ -164,7 +164,15 @@ async def main():
         plt.xlabel('Response Tokens')
         plt.ylabel('TPS')
         plt.title(model_name + '_output')
-        plt.savefig('data/scatter_' + model_name + '_tps_output_qremaining' + '.png')
+        plt.savefig('data/scatter_' + model_name + '_tps_output_qremaining' + '.png') 
+
+        # latency vs output tokens 
+        plt.clf()
+        sns.scatterplot(data=df, x='response_tokens', y='latency', hue='model')
+        plt.xlabel('Response Tokens')
+        plt.ylabel('Latency')
+        plt.title(model_name + '_output')
+        plt.savefig('data/scatter_' + model_name + '_latency_output_qremaining' + '.png')
     
     ## Pairwise analysis 
     
