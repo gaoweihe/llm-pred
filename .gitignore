@@ -13,3 +13,4 @@ __pycache__/
 !data/timing_data.csv
 *.deb
 Miniconda*.sh
+*.pkl
