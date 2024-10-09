@@ -1,0 +1,21 @@
+# This is a TOML document
+
+title = "Configuration Arguments"
+
+[main]
+name = "main"
+
+[main.model]
+
+
+[main.data]
+
+[main.data.source]
+
+[main.data.source.temporal]
+type = "pickle"
+path = "latest_dataset_unquantized.pkl"
+
+[main.analytics]
+save-intermediate-data = false
+save-figures = false
