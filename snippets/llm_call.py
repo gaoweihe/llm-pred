@@ -7,6 +7,8 @@ import websockets
 
 AZURE_OPENAI_GPT4 = "gpt4-new"
 AZURE_OPENAI_GPT3p5 = "gpt3-5"
+AZURE_OPENAI_GPT4o = "gpt-4o"
+AZURE_OPENAI_GPT4o_mini = "4o-mini"
 CLAUDE_HAIKU = "anthropic.claude-3-haiku-20240307-v1:0"
 CLAUDE_SONNET = "anthropic.claude-3-sonnet-20240229-v1:0"
 
@@ -32,9 +34,10 @@ async def websocket_post_model_adapter(model, prompt, system, temperature):
             while response_dict is None or "message" not in response_dict:
                 response = await websocket.recv()
                 response_dict = json.loads(response)
-                print(response, response_dict)  # For debugging purposes
+                # print(response, response_dict)  # For debugging purposes
         except websockets.exceptions.ConnectionClosedOK as e:
-            print(f"Connection closed: {e}")
+            pass
+            # print(f"Connection closed: {e}")
 
         return response_dict
 
