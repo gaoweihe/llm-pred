@@ -12,4 +12,6 @@ import tqdm
 import threading
 import tomllib
 import pickle
+import numpy
+import asyncio
 mutex = threading.Lock() 
